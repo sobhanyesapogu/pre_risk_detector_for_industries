@@ -1,5 +1,5 @@
 /**
- * Gemini AI-powered risk analysis system
+ * Gemini AI-powered risk analysis system - Optimized for Vercel
  */
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
@@ -24,6 +24,8 @@ export interface GeminiRiskResult {
 export class GeminiRiskAnalyzer {
   private genAI: GoogleGenerativeAI | null = null;
   private model: any = null;
+  private cache = new Map<string, GeminiRiskResult>();
+  private isProduction = process.env.NODE_ENV === 'production';
 
   constructor() {
     // Initialize Gemini AI
@@ -34,7 +36,15 @@ export class GeminiRiskAnalyzer {
     if (apiKey && apiKey !== "demo-mode") {
       try {
         this.genAI = new GoogleGenerativeAI(apiKey);
-        this.model = this.genAI.getGenerativeModel({ model: "gemini-pro" });
+        this.model = this.genAI.getGenerativeModel({ 
+          model: "gemini-pro",
+          generationConfig: {
+            temperature: 0.1, // More consistent results
+            topK: 1,
+            topP: 0.8,
+            maxOutputTokens: 1024, // Limit response size
+          }
+        });
         console.log("✅ Gemini AI initialized successfully");
       } catch (error) {
         console.warn("❌ Gemini API initialization failed:", error);
@@ -50,22 +60,48 @@ export class GeminiRiskAnalyzer {
   ): Promise<GeminiRiskResult> {
     
     console.log("🔍 Starting risk analysis...");
-    console.log("📊 Current data:", currentData);
-    console.log("📈 Historical data points:", historicalData.length);
+    
+    // Create cache key
+    const cacheKey = `${currentData.continuous_work_hours}-${currentData.near_miss_count}-${currentData.machine_usage_level}-${currentData.shift_type}`;
+    
+    // Check cache first
+    if (this.cache.has(cacheKey)) {
+      console.log("⚡ Using cached result");
+      return this.cache.get(cacheKey)!;
+    }
+    
+    // In production, prefer fallback for speed unless it's a critical analysis
+    if (this.isProduction && currentData.continuous_work_hours < 10 && currentData.near_miss_count < 3) {
+      console.log("⚡ Using fast fallback analysis for production");
+      const result = this.fallbackAnalysis(currentData);
+      this.cache.set(cacheKey, result);
+      return result;
+    }
     
     // Use Gemini AI if available, otherwise fallback
     if (this.model) {
       try {
         console.log("🤖 Using Gemini AI analysis");
-        return await this.geminiAnalysis(currentData, historicalData);
+        const result = await Promise.race([
+          this.geminiAnalysis(currentData, historicalData),
+          new Promise<GeminiRiskResult>((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout')), 5000) // 5 second timeout
+          )
+        ]);
+        this.cache.set(cacheKey, result);
+        return result;
       } catch (error) {
         console.warn("❌ Gemini analysis failed, using fallback:", error);
-        return this.fallbackAnalysis(currentData);
+        const result = this.fallbackAnalysis(currentData);
+        this.cache.set(cacheKey, result);
+        return result;
       }
     }
     
     console.log("🔄 Using fallback analysis (no AI model)");
-    return this.fallbackAnalysis(currentData);
+    const result = this.fallbackAnalysis(currentData);
+    this.cache.set(cacheKey, result);
+    return result;
   }
 
   private async geminiAnalysis(
@@ -73,62 +109,26 @@ export class GeminiRiskAnalyzer {
     historicalData: OperationalData[]
   ): Promise<GeminiRiskResult> {
     
-    console.log("🤖 Calling Gemini AI for risk analysis...", currentData);
+    console.log("🤖 Calling Gemini AI for risk analysis...");
     
-    const prompt = `
-You are an expert industrial safety AI analyst. Analyze the following operational data and provide a JSON response with risk assessment.
+    // Simplified prompt for faster response
+    const prompt = `Analyze industrial safety risk. Return JSON only:
+Work: ${currentData.continuous_work_hours}h, Near-miss: ${currentData.near_miss_count}, Machine: ${currentData.machine_usage_level}, Shift: ${currentData.shift_type}
 
-CURRENT OPERATIONAL DATA:
-- Work Hours: ${currentData.continuous_work_hours} hours continuous
-- Near Miss Count: ${currentData.near_miss_count} incidents
-- Machine Usage: ${currentData.machine_usage_level}
-- Shift Type: ${currentData.shift_type}
-- Timestamp: ${currentData.timestamp}
-
-HISTORICAL CONTEXT:
-${historicalData.map((data, i) => `
-Step ${i + 1}: ${data.continuous_work_hours}h work, ${data.near_miss_count} near-misses, ${data.machine_usage_level} machine usage, ${data.shift_type} shift`).join('')}
-
-ANALYSIS REQUIREMENTS:
-1. Calculate risk score (0-100) based on:
-   - Fatigue levels from work hours
-   - Incident patterns from near-misses
-   - Equipment stress from machine usage
-   - Circadian factors from shift type
-   - Trend analysis from historical data
-
-2. Determine risk level: Low (0-39), Medium (40-69), High (70-100)
-
-3. Identify specific contributing factors
-
-4. Provide confidence level (0.0-1.0)
-
-5. Generate AI insights about patterns and trends
-
-6. Suggest specific preventive recommendations
-
-Respond ONLY with valid JSON in this exact format:
-{
-  "riskScore": number,
-  "riskLevel": "Low|Medium|High",
-  "factors": ["factor1", "factor2"],
-  "confidence": number,
-  "aiInsights": ["insight1", "insight2"],
-  "recommendations": ["rec1", "rec2"]
-}`;
+Format: {"riskScore":0-100,"riskLevel":"Low|Medium|High","factors":["factor1"],"confidence":0.8,"aiInsights":["insight1"],"recommendations":["rec1"]}`;
 
     const result = await this.model.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
     
-    console.log("🤖 Gemini AI Response:", text);
+    console.log("🤖 Gemini AI Response received");
     
     try {
       // Parse JSON response from Gemini
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
-        console.log("✅ Parsed Gemini result:", parsed);
+        console.log("✅ Parsed Gemini result");
         return {
           riskScore: Math.min(Math.max(parsed.riskScore || 0, 0), 100),
           riskLevel: parsed.riskLevel || "Low",
@@ -148,78 +148,72 @@ Respond ONLY with valid JSON in this exact format:
   }
 
   private fallbackAnalysis(currentData: OperationalData): GeminiRiskResult {
-    console.log("🔄 Running fallback risk analysis algorithm");
+    console.log("🔄 Running optimized fallback analysis");
     
     let riskScore = 0;
     const factors: string[] = [];
     const aiInsights: string[] = [];
     const recommendations: string[] = [];
 
-    // Work hours analysis
+    // Optimized work hours analysis
     const workHours = currentData.continuous_work_hours;
-    console.log("⏰ Analyzing work hours:", workHours);
     
     if (workHours > 12) {
       riskScore += 40;
-      factors.push(`Critical fatigue risk: ${workHours}h continuous work`);
-      aiInsights.push("AI detected severe fatigue pattern - high incident correlation");
-      recommendations.push("Immediate operator rotation required");
+      factors.push(`Critical fatigue: ${workHours}h`);
+      aiInsights.push("Severe fatigue detected");
+      recommendations.push("Immediate rotation required");
     } else if (workHours > 8) {
       riskScore += 25;
-      factors.push(`Elevated fatigue: ${workHours}h work period`);
-      aiInsights.push("ML model indicates increased error probability");
-      recommendations.push("Schedule mandatory rest break");
+      factors.push(`High fatigue: ${workHours}h`);
+      aiInsights.push("Increased error probability");
+      recommendations.push("Schedule rest break");
     } else if (workHours > 4) {
       riskScore += 10;
-      factors.push(`Moderate work duration: ${workHours}h`);
-      aiInsights.push("Standard operational window - monitoring continues");
-      recommendations.push("Maintain current safety protocols");
+      factors.push(`Moderate duration: ${workHours}h`);
+      aiInsights.push("Standard monitoring");
+      recommendations.push("Continue protocols");
     }
 
-    // Near miss analysis
+    // Optimized near miss analysis
     const nearMiss = currentData.near_miss_count;
-    console.log("⚠️ Analyzing near-miss incidents:", nearMiss);
     
     if (nearMiss > 5) {
       riskScore += 30;
-      factors.push(`Critical incident pattern: ${nearMiss} near-misses`);
-      aiInsights.push("Pattern recognition: High incident clustering detected");
-      recommendations.push("Immediate safety protocol review");
+      factors.push(`Critical incidents: ${nearMiss}`);
+      aiInsights.push("High incident clustering");
+      recommendations.push("Safety review required");
     } else if (nearMiss > 2) {
       riskScore += 20;
-      factors.push(`Warning: ${nearMiss} near-miss incidents`);
-      aiInsights.push("Trend analysis shows escalating risk trajectory");
-      recommendations.push("Enhanced monitoring required");
+      factors.push(`Warning: ${nearMiss} incidents`);
+      aiInsights.push("Escalating risk trend");
+      recommendations.push("Enhanced monitoring");
     } else if (nearMiss > 0) {
       riskScore += 10;
-      factors.push(`${nearMiss} near-miss incident(s) recorded`);
-      aiInsights.push("Incident tracking within normal parameters");
-      recommendations.push("Continue standard safety procedures");
+      factors.push(`${nearMiss} incident(s)`);
+      aiInsights.push("Normal parameters");
+      recommendations.push("Standard procedures");
     }
 
     // Machine usage analysis
-    console.log("🏭 Analyzing machine usage:", currentData.machine_usage_level);
-    
     if (currentData.machine_usage_level === 'high') {
       riskScore += 20;
-      factors.push('High machine stress detected');
-      aiInsights.push('Equipment stress analysis indicates maintenance window');
-      recommendations.push("Reduce machine load by 30%");
+      factors.push('High machine stress');
+      aiInsights.push('Equipment stress detected');
+      recommendations.push("Reduce load 30%");
     } else if (currentData.machine_usage_level === 'normal') {
       riskScore += 5;
-      factors.push('Normal machine operation');
-      aiInsights.push('Equipment operating within safe parameters');
-      recommendations.push("Maintain current operational levels");
+      factors.push('Normal operation');
+      aiInsights.push('Safe parameters');
+      recommendations.push("Maintain levels");
     }
 
     // Shift analysis
-    console.log("🌙 Analyzing shift type:", currentData.shift_type);
-    
     if (currentData.shift_type === 'night') {
       riskScore += 15;
-      factors.push('Night shift circadian risk factor');
-      aiInsights.push('Circadian rhythm analysis shows peak risk period');
-      recommendations.push("Increase lighting and supervision");
+      factors.push('Night shift risk');
+      aiInsights.push('Peak risk period');
+      recommendations.push("Increase supervision");
     }
 
     // Determine risk level
@@ -232,8 +226,7 @@ Respond ONLY with valid JSON in this exact format:
       riskLevel = "Low";
     }
 
-    console.log(`📊 Final risk assessment: ${riskLevel} (${riskScore}/100)`);
-    console.log("🔍 Risk factors:", factors);
+    console.log(`📊 Risk: ${riskLevel} (${riskScore}/100)`);
 
     return {
       riskScore: Math.min(riskScore, 100),

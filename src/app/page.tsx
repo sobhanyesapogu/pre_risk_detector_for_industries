@@ -129,8 +129,13 @@ export default function DashboardPage() {
         const historicalData = uploadedData.slice(0, step);
         
         try {
-          // Use AI for risk analysis
-          const aiResult = await geminiRiskAnalyzer.analyzeRisk(currentData, historicalData);
+          // Use AI for risk analysis with timeout
+          const aiResult = await Promise.race([
+            geminiRiskAnalyzer.analyzeRisk(currentData, historicalData),
+            new Promise<any>((_, reject) => 
+              setTimeout(() => reject(new Error('AI timeout')), 3000)
+            )
+          ]);
           
           setRiskScore(aiResult.riskScore);
           setRiskLevel(aiResult.riskLevel);
@@ -147,8 +152,8 @@ export default function DashboardPage() {
           
           setLiveTimelineData(prev => [...prev, timePoint]);
           
-          // Store result in database
-          await databaseService.storeAnalysisResult({
+          // Store result in database (non-blocking)
+          databaseService.storeAnalysisResult({
             sessionId,
             stepNumber: step,
             timestamp: currentData.timestamp,
@@ -165,7 +170,7 @@ export default function DashboardPage() {
             aiInsights: aiResult.aiInsights,
             recommendations: aiResult.recommendations,
             timelineData: timePoint
-          });
+          }).catch(err => console.warn('DB store failed:', err));
           
           // Trigger alert for high risk
           if (aiResult.riskLevel === "High" && !alertData) {
@@ -177,15 +182,15 @@ export default function DashboardPage() {
               alertMessage
             });
             
-            // Store alert in database
-            await databaseService.storeAlert({
+            // Store alert in database (non-blocking)
+            databaseService.storeAlert({
               sessionId,
               alertTitle: "⚠️ AI Critical Safety Alert",
               alertMessage,
               riskScore: aiResult.riskScore,
               riskLevel: "High",
               triggeredAt: new Date() as any
-            });
+            }).catch(err => console.warn('Alert store failed:', err));
           }
           
         } catch (error) {
@@ -197,15 +202,15 @@ export default function DashboardPage() {
         clearInterval(interval);
         setIsAnalyzing(false);
         
-        // Update session as completed
-        await databaseService.updateSession(sessionId, {
+        // Update session as completed (non-blocking)
+        databaseService.updateSession(sessionId, {
           status: 'completed',
           endTime: new Date() as any
-        });
+        }).catch(err => console.warn('Session update failed:', err));
         
-        console.log("✅ Analysis completed and stored in database");
+        console.log("✅ Analysis completed");
       }
-    }, 2000); // Slower for AI API calls
+    }, 1000); // Faster interval - 1 second
   };
 
   const simulateWithDemoData = async (sessionId: string) => {
@@ -238,10 +243,15 @@ export default function DashboardPage() {
         console.log("📈 Analyzing data:", currentData);
         
         try {
-          // Use Gemini AI for risk analysis
-          const geminiResult = await geminiRiskAnalyzer.analyzeRisk(currentData, historicalData);
+          // Use Gemini AI for risk analysis with timeout
+          const geminiResult = await Promise.race([
+            geminiRiskAnalyzer.analyzeRisk(currentData, historicalData),
+            new Promise<any>((_, reject) => 
+              setTimeout(() => reject(new Error('Demo timeout')), 2000)
+            )
+          ]);
           
-          console.log("✅ Gemini result:", geminiResult);
+          console.log("✅ Analysis result received");
           
           setRiskScore(geminiResult.riskScore);
           setRiskLevel(geminiResult.riskLevel);
@@ -258,8 +268,8 @@ export default function DashboardPage() {
           
           setLiveTimelineData(prev => [...prev, timePoint]);
           
-          // Store result in database
-          await databaseService.storeAnalysisResult({
+          // Store result in database (non-blocking)
+          databaseService.storeAnalysisResult({
             sessionId,
             stepNumber: step,
             timestamp: currentData.timestamp,
@@ -276,7 +286,7 @@ export default function DashboardPage() {
             aiInsights: geminiResult.aiInsights,
             recommendations: geminiResult.recommendations,
             timelineData: timePoint
-          });
+          }).catch(err => console.warn('DB store failed:', err));
           
           // Trigger alert for high risk
           if (geminiResult.riskLevel === "High" && !alertData) {
@@ -289,15 +299,15 @@ export default function DashboardPage() {
               alertMessage
             });
             
-            // Store alert in database
-            await databaseService.storeAlert({
+            // Store alert in database (non-blocking)
+            databaseService.storeAlert({
               sessionId,
               alertTitle: "⚠️ AI Critical Safety Alert",
               alertMessage,
               riskScore: geminiResult.riskScore,
               riskLevel: "High",
               triggeredAt: new Date() as any
-            });
+            }).catch(err => console.warn('Alert store failed:', err));
           }
           
         } catch (error) {
@@ -310,15 +320,15 @@ export default function DashboardPage() {
         clearInterval(interval);
         setIsAnalyzing(false);
         
-        // Update session as completed
-        await databaseService.updateSession(sessionId, {
+        // Update session as completed (non-blocking)
+        databaseService.updateSession(sessionId, {
           status: 'completed',
           endTime: new Date() as any
-        });
+        }).catch(err => console.warn('Session update failed:', err));
         
-        console.log("✅ Demo analysis completed and stored in database");
+        console.log("✅ Demo analysis completed");
       }
-    }, 1500); // Normal speed for demo
+    }, 800); // Faster demo - 0.8 seconds
   };
 
   const handleStopAnalysis = async () => {
