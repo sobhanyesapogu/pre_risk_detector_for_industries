@@ -29,11 +29,7 @@ const nextConfig = {
     return config;
   },
   // Transpile Three.js modules
-  transpilePackages: ['three', '@react-three/fiber', '@react-three/drei'],
-  // Experimental features for better compatibility
-  experimental: {
-    esmExternals: 'loose'
-  }
+  transpilePackages: ['three', '@react-three/fiber', '@react-three/drei']
 }
 
 module.exports = nextConfig

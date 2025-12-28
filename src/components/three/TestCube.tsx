@@ -1,14 +1,15 @@
 'use client'
 
 import { Canvas } from '@react-three/fiber'
-import { OrbitControls, Box } from '@react-three/drei'
+import { OrbitControls } from '@react-three/drei'
 import { Suspense } from 'react'
 
 function RotatingCube() {
   return (
-    <Box args={[1, 1, 1]} position={[0, 0, 0]}>
+    <mesh position={[0, 0, 0]}>
+      <boxGeometry args={[1, 1, 1]} />
       <meshStandardMaterial color="orange" />
-    </Box>
+    </mesh>
   )
 }
 
