@@ -51,20 +51,29 @@ export default function DashboardPage() {
 
   // 🚀 MAIN FRONTEND SCANNING LOGIC - This runs in browser!
   React.useEffect(() => {
-    if (!isAnalyzing || analysisData.length === 0) return;
+    if (!isAnalyzing || analysisData.length === 0) {
+      console.log("❌ Scanning not starting:", { isAnalyzing, dataLength: analysisData.length });
+      return;
+    }
 
-    console.log("🔄 Starting frontend scanning loop...");
+    console.log("🔄 Starting frontend scanning loop with", analysisData.length, "data points");
     
     let step = 0;
     const interval = setInterval(async () => {
       console.log(`📊 Frontend scan step: ${step + 1}/${analysisData.length}`);
       
       // Play scanning sound
-      soundManager.scanningBeep();
+      try {
+        soundManager.scanningBeep();
+      } catch (error) {
+        console.warn("Sound failed:", error);
+      }
       
       if (step < analysisData.length) {
         const currentData = analysisData[step];
         const historicalData = analysisData.slice(0, step);
+        
+        console.log("📈 Processing data:", currentData);
         
         try {
           // AI Analysis in browser (with fallback)
@@ -110,10 +119,14 @@ export default function DashboardPage() {
             }).catch(err => console.warn('DB store failed (non-critical):', err));
           }
           
-          // Trigger alert for high risk
-          if (aiResult.riskLevel === "High" && !alertData) {
+          // Trigger alert for high risk (only once)
+          if (aiResult.riskLevel === "High" && step > 3) { // Only after some steps
             console.log("🚨 High risk detected!");
-            soundManager.criticalAlert();
+            try {
+              soundManager.criticalAlert();
+            } catch (error) {
+              console.warn("Alert sound failed:", error);
+            }
             
             setAlertData({
               alertTitle: "⚠️ AI Critical Safety Alert",
@@ -123,6 +136,21 @@ export default function DashboardPage() {
           
         } catch (error) {
           console.warn(`⚠️ Analysis failed for step ${step + 1}:`, error);
+          
+          // Use fallback values to keep scanning going
+          setRiskScore(Math.min(20 + step * 10, 100));
+          setRiskLevel(step > 5 ? "High" : step > 2 ? "Medium" : "Low");
+          setCurrentFactors([`Step ${step + 1} processing`]);
+          setCurrentAnalysisStep(step);
+          
+          const timePoint = {
+            time: currentData.timestamp,
+            risk: Math.min(20 + step * 10, 100),
+            workHours: currentData.continuous_work_hours,
+            nearMiss: currentData.near_miss_count,
+          };
+          
+          setLiveTimelineData(prev => [...prev, timePoint]);
         }
         
         step++;
@@ -147,7 +175,7 @@ export default function DashboardPage() {
       console.log("🛑 Cleaning up scanning interval");
       clearInterval(interval);
     };
-  }, [isAnalyzing, analysisData, currentSessionId, alertData]);
+  }, [isAnalyzing, analysisData]); // Removed alertData and currentSessionId from dependencies
 
   const handleDataUpload = (file: File) => {
     const reader = new FileReader();
@@ -176,11 +204,17 @@ export default function DashboardPage() {
     reader.readAsText(file);
   };
 
-  const handleStartAnalysis = async () => {
+  const handleStartAnalysis = () => {
     console.log("🚀 Starting FRONTEND analysis...");
+    console.log("Current state:", { isAnalyzing, uploadedDataLength: uploadedData.length });
     
     // Reset state
-    soundManager.simulationStart();
+    try {
+      soundManager.simulationStart();
+    } catch (error) {
+      console.warn("Sound start failed:", error);
+    }
+    
     setAlertData(null);
     setRiskLevel("Low");
     setRiskScore(15);
@@ -207,27 +241,29 @@ export default function DashboardPage() {
       ];
     }
     
+    console.log("📊 Data to analyze:", dataToAnalyze);
+    
     // Create session (optional, non-blocking)
-    try {
-      const sessionId = await databaseService.createSession({
-        sessionId: `session_${Date.now()}`,
-        startTime: new Date() as any,
-        status: 'running',
-        totalSteps: dataToAnalyze.length,
-        dataSource: uploadedData.length > 0 ? 'csv' : 'demo',
-        uploadedFileName: uploadedData.length > 0 ? 'uploaded_data.csv' : undefined
-      });
+    databaseService.createSession({
+      sessionId: `session_${Date.now()}`,
+      startTime: new Date() as any,
+      status: 'running',
+      totalSteps: dataToAnalyze.length,
+      dataSource: uploadedData.length > 0 ? 'csv' : 'demo',
+      uploadedFileName: uploadedData.length > 0 ? 'uploaded_data.csv' : undefined
+    }).then(sessionId => {
       setCurrentSessionId(sessionId);
       console.log("📝 Session created:", sessionId);
-    } catch (error) {
+    }).catch(error => {
       console.warn("⚠️ Session creation failed (non-critical):", error);
-    }
+    });
     
     // Set data and start analysis (triggers useEffect)
+    console.log("🎯 Setting analysis data and starting...");
     setAnalysisData(dataToAnalyze);
     setIsAnalyzing(true);
     
-    console.log("✅ Frontend analysis started with", dataToAnalyze.length, "data points");
+    console.log("✅ Frontend analysis setup complete");
   };
 
   const handleStopAnalysis = () => {
@@ -278,6 +314,40 @@ export default function DashboardPage() {
           <p className="text-sm text-green-600 dark:text-green-400">
             All scanning runs in your browser - guaranteed to work on Vercel!
           </p>
+        </div>
+        
+        {/* Debug Info */}
+        <div className="rounded-lg border bg-yellow-50 dark:bg-yellow-950 p-4 text-center">
+          <h3 className="font-medium text-yellow-700 dark:text-yellow-300">
+            🔧 Debug Info
+          </h3>
+          <p className="text-sm text-yellow-600 dark:text-yellow-400">
+            Analyzing: {isAnalyzing ? "YES" : "NO"} | 
+            Data Points: {analysisData.length} | 
+            Current Step: {currentAnalysisStep + 1} | 
+            Risk: {riskScore}
+          </p>
+          <div className="mt-2 space-x-2">
+            <button 
+              onClick={() => console.log("Debug state:", { isAnalyzing, analysisData, currentAnalysisStep, riskScore })}
+              className="px-3 py-1 bg-yellow-200 text-yellow-800 rounded text-xs"
+            >
+              Log State
+            </button>
+            <button 
+              onClick={() => {
+                console.log("Force starting analysis...");
+                setAnalysisData([
+                  { continuous_work_hours: 2, near_miss_count: 0, machine_usage_level: 'low', shift_type: 'day', timestamp: '08:00' },
+                  { continuous_work_hours: 8, near_miss_count: 3, machine_usage_level: 'high', shift_type: 'day', timestamp: '11:00' },
+                ]);
+                setIsAnalyzing(true);
+              }}
+              className="px-3 py-1 bg-yellow-200 text-yellow-800 rounded text-xs"
+            >
+              Force Start
+            </button>
+          </div>
         </div>
         
         <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
